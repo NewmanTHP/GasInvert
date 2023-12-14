@@ -117,11 +117,6 @@ background = gp.BackgroundGas(grid, source_location, atmospheric_state)
 background.background_plot(save, format='png')
 
 
-# Changing wind speed and direction : ---------------------------------------------
-gaussianplume.wind_direction_plot(save, format='png')
-gaussianplume.wind_speed_plot(save, format='png')
-
-
 # Sensors Class : ---------------------------------------------
 sensors = gp.Sensors(gaussianplume, background)
 sensors.atmospheric_methane_and_sensors(save, format='png')
@@ -129,4 +124,6 @@ sensors.log_atmospheric_methane_and_sensors(save, format='png')
 ```
 
 
-![Plume](Initial_Gaussian_Plume.png)
+![logPlume](Log_initial_Gaussian_Plume.png)
+![background](backgroundplot)
+![sensors](Log_Gaussian_plume_background_and_sensors.png)
