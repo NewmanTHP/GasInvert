@@ -124,6 +124,6 @@ sensors.log_atmospheric_methane_and_sensors(save, format='png')
 ```
 
 
-![logPlume](Log_initial_Gaussian_Plume.png)
-![background](backgroundplot)
+![logPlume](/Plots/Log_initial_Gaussian_Plume.png)
+![background](/Plots/backgrounds_plot.jpeg)
 ![sensors](Log_Gaussian_plume_background_and_sensors.png)
