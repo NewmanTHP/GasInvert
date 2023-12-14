@@ -1,16 +1,17 @@
 import gasinvert.atmospheric_measurements as gp
 import gasinvert.mcmc as mcmc
-import jax.numpy as jnp
-import jax
-from jax import config
-import matplotlib.pylab as pylab
+
 from jax.flatten_util import ravel_pytree
+import matplotlib.pylab as pylab
+import matplotlib.pyplot as plt
+import jax.numpy as jnp
+from jax import config
+import seaborn as sns
+import numpy as np
+import time
+import jax
 import tensorflow_probability.substrates.jax as tfp
 tfd = tfp.distributions
-import time
-import seaborn as sns
-import matplotlib.pyplot as plt
-import numpy as np
 
 
 config.update("jax_enable_x64", True)
@@ -25,9 +26,10 @@ params = {
 pylab.rcParams.update(params)
 
 
-#############################################
-# 1. Defining Atmospheric Conditions and Sensors 
-#############################################
+
+############################################################
+# 1. Simulating Atmospheric Conditions and Sensors locations
+############################################################
 
 # Make a grid
 grid = gp.Grid(
@@ -39,7 +41,7 @@ grid = gp.Grid(
     dz = jnp.array(1),
 )
 
-# Make a source location
+# Choose a source location
 source_location = gp.SourceLocation(
     source_location_x = jnp.array(1),
     source_location_y = jnp.array(16),
@@ -63,16 +65,16 @@ wind_field = gp.WindField(
 atmospheric_state = gp.AtmosphericState(
     vertical_angle = jnp.deg2rad(jnp.array(25.0)),
     horizontal_angle = jnp.deg2rad(jnp.array(20.0)),
-    emission_rate = jnp.array(1.6e-3),      #  realistic value 1.6e-3 kg/s (from Stockie 2011)
+    emission_rate = jnp.array(1.6e-3),      
     half_width = jnp.array(2.0),
     max_abl = jnp.array(1000.0),
-    background_mean = jnp.array(1.9),       #1.9        # equivalent to 1.9 ppm
+    background_mean = jnp.array(1.9),       
     background_std = jnp.array(1e-4),       
     background_seed = jnp.array(56),
-    background_filter = "power-law",        # filter to apply to the background concentration (e.g. Gaussian)
-    Gaussian_filter_kernel = 1,              # controls Gaussian filter smoothness
-    downwind_power_H = jnp.array(1.0),         # power of the downwind in wind sigma
-    downwind_power_V = jnp.array(0.75),         # power of the downwind in wind sigma
+    background_filter = "power-law",        
+    Gaussian_filter_kernel = 1,              
+    downwind_power_H = jnp.array(1.0),         
+    downwind_power_V = jnp.array(0.75),         
 )
 
 # Define sensor settings
@@ -92,27 +94,38 @@ save = False
 
 ## Gaussian plume Class : ---------------------------------------------
 gaussianplume = gp.GaussianPlume(grid, source_location, wind_field, atmospheric_state, sensors_settings)
-
 gaussianplume.initial_gaussian_plume_plot(save, format='png')
 gaussianplume.log_initial_gaussian_plume_plot(save, format='png')
 
+
 # Background concentration Class : ---------------------------------------------
 background = gp.BackgroundGas(grid, source_location, atmospheric_state)
-
 background.background_plot(save, format='png')
 
-# Changing wind speed and direction : ---------------------------------------------
 
+# Changing wind speed and direction : ---------------------------------------------
 gaussianplume.wind_direction_plot(save, format='png')
 gaussianplume.wind_speed_plot(save, format='png')
 
+
 # Sensors Class : ---------------------------------------------
 sensors = gp.Sensors(gaussianplume, background)
-
 sensors.atmospheric_methane_and_sensors(save, format='png')
 sensors.log_atmospheric_methane_and_sensors(save, format='png')
 
-# DATA
+
+
+
+
+
+
+
+
+
+
+
+
+# Data
 truth = sensors.temporal_sensors_measurements()
 data = truth[0]
 
