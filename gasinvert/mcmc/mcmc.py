@@ -50,6 +50,10 @@ class Priors:
     b_mean: Float
     b_var: Float
 
+
+
+
+
 class Gibbs_samplers:
 
     def __init__(self, gaussianplume, data, priors):
@@ -57,6 +61,8 @@ class Gibbs_samplers:
         self.gaussianplume = gaussianplume
         self.data = data
         self.priors = priors
+
+
 
     def background_conditional_posterior(self, s, A,  sigma_squared, background_cov, key):
         """Conditional posterior for emission rate vector s"""
@@ -67,6 +73,8 @@ class Gibbs_samplers:
 
         return tfd.Normal(loc = mean, scale = jnp.sqrt(covariance)).sample(self.gaussianplume.sensors_settings.sensor_number, seed=key)
     
+
+
     def measurement_error_var_conditional_posterior(self, y, A, beta, s, key):
         n = self.gaussianplume.sensors_settings.sensor_number * self.gaussianplume.wind_field.number_of_time_steps
         variance = self.priors.sigma_squared_rate + (jnp.sum(jnp.square(y - beta - jnp.matmul(A, s.reshape(-1,1)))) / 2)
@@ -74,12 +82,15 @@ class Gibbs_samplers:
 
         return tfd.InverseGamma(concentration = shape, scale = variance).sample(1, key)[0]
 
+
+
     def binary_indicator_Zi_conditional_posterior(self, s, key):
         a = (jnp.square(s.reshape(-1,1) - self.priors.log_slab_mean) / (2 * self.priors.log_slab_var)) 
         numerator = jnp.power(2 * jnp.pi * self.priors.log_slab_var, -0.5) *  self.priors.theta
         denominator = numerator + (jnp.power(2 * jnp.pi * self.priors.log_spike_var , -0.5) * jnp.exp(-(jnp.square(s.reshape(-1,1) - self.priors.log_spike_mean) / (2 * self.priors.log_spike_var)) + a) * (1-self.priors.theta))
         bern_prob = numerator / denominator
         return tfd.Binomial(total_count=1, probs=bern_prob).sample(1, seed=key).squeeze()
+
 
 
 
@@ -97,9 +108,13 @@ class MWG_tools:
 
         self.binary_indicator_Zi_conditional_posterior = Gibbs_samplers(gaussianplume, data, priors).binary_indicator_Zi_conditional_posterior
 
+
+
     def glpi(self, x, sigma_squared, betas, ss_var, ss_mean):
         return jax.grad(self.log_posterior)(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors)
     
+
+
     def mwg_scan(self, step, Gibbs_init, MH_init, iters, r_eps):
         key = random.PRNGKey(0)
         sigma_squared, background = Gibbs_init["sigma_squared"], Gibbs_init["background"].reshape(-1,1)
@@ -218,12 +233,6 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         }
 
         return MALA_within_Gibbs_traces
-
-    
-
-
-
-
 
 
 
@@ -351,7 +360,9 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         }
 
         return Manifold_MALA_within_Gibbs_traces
-    
+
+
+
 
 
 class Plots:
@@ -359,6 +370,7 @@ class Plots:
     def __init__(self, gaussianplume, truth):
         self.gaussianplume = gaussianplume
         self.truth = truth
+
 
 
     def true_source_location_emission_rate_chains(self, chains, save = False, format = "pdf"):
@@ -379,7 +391,7 @@ class Plots:
         if save:
             plt.savefig("true source emission rate density." + format, dpi=300, bbox_inches="tight")
         return  plt.show()
-    
+
 
 
     def total_emission_rates_chains(self, chains, save = False, format = "pdf"):
@@ -400,7 +412,7 @@ class Plots:
         if save:
             plt.savefig("total emission rates density." + format, dpi=300, bbox_inches="tight")
         return  plt.show()
-    
+
 
 
     def zero_emission_rates_chains(self, chains, save = False, format = "pdf"):
@@ -409,6 +421,7 @@ class Plots:
         if save:
             plt.savefig("Zero emissions source." + format, dpi=300, bbox_inches="tight")
         plt.show()
+
 
 
     def measurement_error_var_chains(self, chains, save = False, format = "pdf"):
@@ -429,7 +442,7 @@ class Plots:
         if save:
             plt.savefig("sigma squared density." + format, dpi=300, bbox_inches="tight")
         return  plt.show()
-    
+
 
 
     def background_chains(self, chains, save = False, format = "pdf"):
