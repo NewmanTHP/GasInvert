@@ -376,14 +376,14 @@ class Plots:
     def true_source_location_emission_rate_chains(self, chains, save = False, format = "pdf"):
         plt.plot(chains["s"][:,jnp.where(self.truth[2]>0)[0]])
         plt.title("Source emission rate")
-        plt.axhline(1.6e-3, color='red', linestyle='--')
+        plt.axhline(self.gaussianplume.atmospheric_state.emission_rate, color='red', linestyle='--')
         if save:
             plt.savefig("true_source_emission_rate." + format, dpi=300, bbox_inches="tight")
         return  plt.show()
     
     def true_source_location_emission_rate_density(self, chains, burn_in, save = False, format = "pdf"):
         sns.kdeplot(chains["s"][burn_in:,jnp.where(self.truth[2]>0)].squeeze(), color='seagreen', label='MALA', fill=True, alpha=0.1)
-        plt.axvline(self.truth[2]>0, color='red', linestyle='--')
+        plt.axvline(self.gaussianplume.atmospheric_state.emission_rate, color='red', linestyle='--')
         plt.xlabel("Emission rate")
         plt.ylabel("Density")
         plt.title("Source emission rate")
@@ -397,14 +397,14 @@ class Plots:
     def total_emission_rates_chains(self, chains, save = False, format = "pdf"):
         plt.plot(jnp.sum(chains["s"][:,:], axis=1))
         plt.title("Total Emissions Rates Over Grid")
-        plt.axhline(self.truth[2]>0, color='red', linestyle='--')
+        plt.axhline(self.gaussianplume.atmospheric_state.emission_rate, color='red', linestyle='--')
         if save:
             plt.savefig("total emission rates." + format, dpi=300, bbox_inches="tight")
         plt.show()
 
     def total_emission_rates_density(self, chains, burn_in, save = False, format = "pdf"):
         sns.kdeplot(jnp.sum(chains["s"][burn_in:,:], axis=1), color='seagreen', label=str(chains), fill=True, alpha=0.1)
-        plt.axvline(self.truth[2]>0, color='red', linestyle='--')
+        plt.axvline(self.gaussianplume.atmospheric_state.emission_rate, color='red', linestyle='--')
         plt.xlabel("Total Emissions Rate")
         plt.ylabel("Density")
         plt.title("Total Emissions Rates Over Grid")
@@ -433,7 +433,7 @@ class Plots:
         plt.show()
 
     def measurement_error_var_density(self, chains, burn_in, save = False, format = "pdf"):
-        sns.kdeplot(chains["sigma_squared"][burn_in:], color='seagreen', label=str(chains), fill=True, alpha=0.1)
+        sns.kdeplot(chains["sigma_squared"][burn_in:], color='seagreen', fill=True, alpha=0.1)
         plt.axvline(self.gaussianplume.sensors_settings.measurement_error_var, color='red', linestyle='--')
         plt.xlabel("Sigma squared")
         plt.ylabel("Density")
@@ -448,14 +448,16 @@ class Plots:
     def background_chains(self, chains, save = False, format = "pdf"):
         plt.plot(chains["background"][:])
         plt.title("Background")
-        plt.axhline(self.truth[4], color='red', linestyle='--')
+        for i in range(self.gaussianplume.sensors_settings.sensor_number):
+            plt.axhline(jnp.unique(self.truth[4])[i], color='red', linestyle='--')
         if save:
             plt.savefig("background." + format, dpi=300, bbox_inches="tight")
         plt.show()
     
     def background_density(self, chains, burn_in, save = False, format = "pdf"):
-        sns.kdeplot(chains["background"][burn_in:], color='seagreen', label=str(chains), fill=True, alpha=0.1)
-        plt.axvline(self.truth[4], color='red', linestyle='--')
+        sns.kdeplot(chains["background"][burn_in:], color='seagreen', fill=True, alpha=0.1)
+        for i in range(self.gaussianplume.sensors_settings.sensor_number):
+            plt.axvline(jnp.unique(self.truth[4])[i], color='red', linestyle='--')
         plt.xlabel("Background")
         plt.ylabel("Density")
         plt.title("Background")
@@ -475,7 +477,7 @@ class Plots:
         plt.show()
 
     def tan_gamma_H_density(self, chains, burn_in, save = False, format = "pdf"):
-        sns.kdeplot(chains["tan_gamma_H"][burn_in:], color='seagreen', label=str(chains), fill=True, alpha=0.1)
+        sns.kdeplot(chains["tan_gamma_H"][burn_in:], color='seagreen', fill=True, alpha=0.1)
         plt.axvline(jnp.tan(self.gaussianplume.atmospheric_state.horizontal_angle), color='red', linestyle='--')
         plt.xlabel("tan_gamma_H")
         plt.ylabel("Density")
@@ -496,7 +498,7 @@ class Plots:
         plt.show()
 
     def tan_gamma_V_density(self, chains, burn_in, save = False, format = "pdf"):
-        sns.kdeplot(chains["tan_gamma_V"][burn_in:], color='seagreen', label=str(chains), fill=True, alpha=0.1)
+        sns.kdeplot(chains["tan_gamma_V"][burn_in:], color='seagreen', fill=True, alpha=0.1)
         plt.axvline(jnp.tan(self.gaussianplume.atmospheric_state.vertical_angle), color='red', linestyle='--')
         plt.xlabel("tan_gamma_V")
         plt.ylabel("Density")
@@ -511,14 +513,14 @@ class Plots:
     def b_H_chains(self, chains, save = False, format = "pdf"):
         plt.plot(chains["b_H"][:])
         plt.title("b_H")
-        plt.axhline(self.truth[0], color='red', linestyle='--')
+        plt.axhline(self.gaussianplume.atmospheric_state.downwind_power_H, color='red', linestyle='--')
         if save:
             plt.savefig("b_H." + format, dpi=300, bbox_inches="tight")
         plt.show()
 
     def b_H_density(self, chains, burn_in, save = False, format = "pdf"):
-        sns.kdeplot(chains["b_H"][burn_in:], color='seagreen', label=str(chains), fill=True, alpha=0.1)
-        plt.axvline(self.truth[0], color='red', linestyle='--')
+        sns.kdeplot(chains["b_H"][burn_in:], color='seagreen', fill=True, alpha=0.1)
+        plt.axvline(self.gaussianplume.atmospheric_state.downwind_power_H, color='red', linestyle='--')
         plt.xlabel("b_H")
         plt.ylabel("Density")
         plt.title("b_H")
@@ -532,14 +534,14 @@ class Plots:
     def b_V_chains(self, chains, save = False, format = "pdf"):
         plt.plot(chains["b_V"][:])
         plt.title("b_V")
-        plt.axhline(self.truth[1], color='red', linestyle='--')
+        plt.axhline(self.gaussianplume.atmospheric_state.downwind_power_V, color='red', linestyle='--')
         if save:
             plt.savefig("b_V." + format, dpi=300, bbox_inches="tight")
         plt.show()
 
     def b_V_density(self, chains, burn_in, save = False, format = "pdf"):
-        sns.kdeplot(chains["b_V"][burn_in:], color='seagreen', label=str(chains), fill=True, alpha=0.1)
-        plt.axvline(self.truth[1], color='red', linestyle='--')
+        sns.kdeplot(chains["b_V"][burn_in:], color='seagreen', fill=True, alpha=0.1)
+        plt.axvline(self.gaussianplume.atmospheric_state.downwind_power_V, color='red', linestyle='--')
         plt.xlabel("b_V")
         plt.ylabel("Density")
         plt.title("b_V")

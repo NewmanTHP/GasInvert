@@ -194,7 +194,7 @@ def log_posterior(params, sigma_squared, betas, ss_var, ss_mean, data, priors):
     return log_posterior
 
 fixed = gaussianplume.fixed_objects_of_coupling_matrix()
-iterations = 3_500
+iterations = 5
 r_eps = 1e-5
 
 
@@ -223,6 +223,15 @@ plots.b_V_density(mala_chains, burn_in=0)
 plots.layerwise_dog_step_size_chains(mala_chains)
 plots.samples_acceptance_rate(mala_chains)
 plots.spike_slab_allocation(mala_chains)
+
+
+
+
+
+
+
+
+
 
 
 
