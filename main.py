@@ -52,7 +52,7 @@ source_location = gp.SourceLocation(
 wind_field = gp.WindField(
     initial_wind_speed = jnp.array(10.0),
     initial_wind_direction = jnp.array(-135.0),
-    number_of_time_steps = jnp.array(200),
+    number_of_time_steps = jnp.array(1_000),
     time_step = jnp.array(1.0),
     wind_speed_temporal_std = jnp.array(1.0),
     wind_direction_temporal_std = jnp.array(30.0),
@@ -79,12 +79,13 @@ atmospheric_state = gp.AtmosphericState(
 
 # Define sensor settings
 sensors_settings =  gp.SensorsSettings(
-    sensor_number = jnp.array(12),
+    sensor_number = jnp.array(20),
     measurement_error_var = jnp.array(1e-1),
     measurement_elevation = jnp.array(0.0),
     sensor_seed = jnp.array(5),
     measurement_error_seed = jnp.array(420),
-    sensor_locations =  [[8, 8], [16,16], [20,20], [40,40], [16,8], [8,16],  [8,32], [32,8], [40,16], [16,40], [32,32], [28,28]], 
+    sensor_locations =  [[8, 8], [16,16], [20,20], [40,40], [16,8], [8,16],  [8,32], [32,8], [40,16], [16,40], [32,32], [28,28],
+                        [4,4], [36,36], [16,24], [24,16], [12,28], [28,12], [36,24], [8,24]], 
 )
 
 
@@ -171,14 +172,12 @@ priors = mcmc.Priors(
     b_var = 0.1,
 )
 
-def log_posterior(params, sigma_squared, betas, ss_var, ss_mean, data, priors):
+def log_posterior(params, sigma_squared, betas, ss_var, ss_mean, data, priors, A):
     """
     Returns the positive log posterior of the point sensors measurements model. 
 
     """
     emissions = params["log_s"].reshape(-1,1)
-
-    A = gaussianplume.temporal_coupling_matrix(fixed, jnp.exp(params["log_tan_gamma_H"]), jnp.exp(params["log_tan_gamma_V"]), jnp.exp(params["log_b_H"]), jnp.exp(params["log_b_V"]))
 
     log_likelihood = tfd.Normal(loc = (jnp.matmul(A,jnp.exp(emissions))+ betas), \
                                 scale= jnp.sqrt(sigma_squared)).log_prob(data)
@@ -200,7 +199,7 @@ def log_posterior(params, sigma_squared, betas, ss_var, ss_mean, data, priors):
 # MALA_Within_Gibbs Results : -----------------------------------------------
 
 
-iterations = 2_500
+iterations = 10_000
 r_eps = 1e-5
 
 

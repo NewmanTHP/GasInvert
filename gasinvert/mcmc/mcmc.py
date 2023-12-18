@@ -111,19 +111,20 @@ class MWG_tools:
 
 
 
-    def glpi(self, x, sigma_squared, betas, ss_var, ss_mean):
-        return jax.grad(self.log_posterior)(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors)
+    def glpi(self, x, sigma_squared, betas, ss_var, ss_mean, A):
+        return jax.grad(self.log_posterior)(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
     
 
 
     def mwg_scan(self, step, Gibbs_init, MH_init, iters, r_eps):
         key = random.PRNGKey(0)
         sigma_squared, background = Gibbs_init["sigma_squared"], Gibbs_init["background"].reshape(-1,1)
-        betas = jnp.repeat(background, 200).reshape(-1,1)
+        betas = jnp.repeat(background, 1_000).reshape(-1,1)
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(MH_init)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
         ss_mean = jnp.where(z==0, self.priors.log_spike_mean, self.priors.log_slab_mean).reshape(-1,1)
-        ll, gradi = jax.value_and_grad(self.log_posterior)(self.mh_unflat_func(MH_init), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors)
+        A = self.gaussianplume.temporal_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_V"]))
+        ll, gradi = jax.value_and_grad(self.log_posterior)(self.mh_unflat_func(MH_init), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
         sum_accept = 0
         z_count = jnp.zeros(len(self.mh_unflat_func(MH_init)["log_s"]))
         gradients = ravel_pytree(gradi)[0]
@@ -162,25 +163,25 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
 
 
-    def mala_advance(self, x, dt, sigma_squared, betas, ss_var, ss_mean):
-        return  x + 0.5*dt*ravel_pytree(self.glpi(x, sigma_squared, betas, ss_var, ss_mean))[0]
+    def mala_advance(self, x, dt, sigma_squared, betas, ss_var, ss_mean, A):
+        return  x + 0.5*dt*ravel_pytree(self.glpi(x, sigma_squared, betas, ss_var, ss_mean, A))[0]
 
 
 
-    def mala_rprop(self, key, x, dt, sigma_squared, betas, ss_var, ss_mean):
-        return self.mala_advance(x, dt, sigma_squared, betas, ss_var, ss_mean) + jnp.sqrt(dt)*jax.random.normal(key, [len(x)])
+    def mala_rprop(self, key, x, dt, sigma_squared, betas, ss_var, ss_mean, A):
+        return self.mala_advance(x, dt, sigma_squared, betas, ss_var, ss_mean, A) + jnp.sqrt(dt)*jax.random.normal(key, [len(x)])
 
 
 
-    def mala_dprop(self, prop, x, dt, sigma_squared, betas, ss_var, ss_mean):
-        return jnp.sum(tfd.Normal(loc=self.mala_advance(x, dt, sigma_squared, betas, ss_var, ss_mean), scale=jnp.sqrt(dt)).log_prob(prop))
+    def mala_dprop(self, prop, x, dt, sigma_squared, betas, ss_var, ss_mean, A):
+        return jnp.sum(tfd.Normal(loc=self.mala_advance(x, dt, sigma_squared, betas, ss_var, ss_mean, A), scale=jnp.sqrt(dt)).log_prob(prop))
 
 
 
     def mala_step(self, updates, key):
         [x, sigma_squared, background, ll, dt, sum_accept, z_count, new_grad_squared_sum, max_dist, iteration] = updates
         #          Updates          #
-        betas = jnp.repeat(background, 200).reshape(-1,1)
+        betas = jnp.repeat(background, 1_000).reshape(-1,1)
         A = self.gaussianplume.temporal_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(x)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
@@ -188,19 +189,19 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         #           Gibbs           #
         sigma_squared = self.measurement_error_var_conditional_posterior(self.data, A, betas, jnp.exp(self.mh_unflat_func(x)["log_s"]), key)
         background = self.background_conditional_posterior(jnp.exp(self.mh_unflat_func(x)["log_s"]), A, sigma_squared, self.priors.variance_log_background_prior, key).reshape(-1,1)
-        betas = jnp.repeat(background, 200).reshape(-1,1)
+        betas = jnp.repeat(background, 1_000).reshape(-1,1)
         #           MALA            #
-        ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors)
-        prop = self.mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean)
-        lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors)
-        a = lp - ll + self.mala_dprop(x, prop, dt, sigma_squared, betas, ss_var, ss_mean) - self.mala_dprop(prop, x, dt, sigma_squared, betas, ss_var, ss_mean)
+        ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
+        prop = self.mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
+        lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
+        a = lp - ll + self.mala_dprop(x, prop, dt, sigma_squared, betas, ss_var, ss_mean, A) - self.mala_dprop(prop, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
         accept = (jnp.log(jax.random.uniform(key)) < a)
         new_x, new_ll = jnp.where(accept, prop, x), jnp.where(accept, lp, ll)
         #          Updates          #
         sum_accept += jnp.min(jnp.array([1, jnp.exp(a)]))
         z_count += z
         max_dist = jnp.maximum(max_dist,  jnp.sqrt(jnp.square(new_x - self.mh_flat)))
-        gradients = ravel_pytree(self.glpi(new_x, sigma_squared, betas, ss_var, ss_mean))[0]
+        gradients = ravel_pytree(self.glpi(new_x, sigma_squared, betas, ss_var, ss_mean, A))[0]
         new_grad_squared_sum += gradients**2
         dt = max_dist / jnp.sqrt(new_grad_squared_sum + 1e-16)
 
@@ -308,7 +309,7 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
     def manifold_mala_step(self, updates, key):
         [x, sigma_squared, background, ll, dt, sum_accept, z_count, new_grad_squared_sum, max_dist, iteration] = updates
         #          Updates          #        
-        betas = jnp.repeat(background, 200).reshape(-1,1)
+        betas = jnp.repeat(background, 1_000).reshape(-1,1)
         A = self.gaussianplume.temporal_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(x)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
@@ -317,7 +318,7 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         #           Gibbs           #
         sigma_squared = self.measurement_error_var_conditional_posterior(self.data, A, betas, jnp.exp(self.mh_unflat_func(x)["log_s"]), key)
         background = self.background_conditional_posterior(jnp.exp(self.mh_unflat_func(x)["log_s"]), A, sigma_squared, self.priors.variance_log_background_prior, key).reshape(-1,1)
-        betas = jnp.repeat(background, 200).reshape(-1,1)
+        betas = jnp.repeat(background, 1_000).reshape(-1,1)
         #          Manifold MALA            #
         ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors)
         prop = self.manifold_mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean)
