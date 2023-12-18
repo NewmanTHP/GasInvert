@@ -194,7 +194,7 @@ def log_posterior(params, sigma_squared, betas, ss_var, ss_mean, data, priors):
     return log_posterior
 
 fixed = gaussianplume.fixed_objects_of_coupling_matrix()
-iterations = 5
+iterations = 3_500
 r_eps = 1e-5
 
 
