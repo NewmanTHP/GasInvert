@@ -52,7 +52,7 @@ source_location = gp.SourceLocation(
 wind_field = gp.WindField(
     initial_wind_speed = jnp.array(10.0),
     initial_wind_direction = jnp.array(-135.0),
-    number_of_time_steps = jnp.array(100),
+    number_of_time_steps = jnp.array(200),
     time_step = jnp.array(1.0),
     wind_speed_temporal_std = jnp.array(1.0),
     wind_direction_temporal_std = jnp.array(30.0),
@@ -117,6 +117,7 @@ sensors.log_atmospheric_methane_and_sensors(save, format='png')
 # Data
 truth = sensors.temporal_sensors_measurements()
 data = truth[0]
+fixed = gaussianplume.fixed_objects_of_coupling_matrix()
 
 
 
@@ -128,7 +129,8 @@ data = truth[0]
 
 
 
-# MCMC Class : ---------------------------------------------
+
+# MCMC initialisation : ------------------------------------------------------
 Gibbsparams = {
     'background': jnp.full(sensors_settings.sensor_number, 1.9),
     'sigma_squared':   0.05}
@@ -193,8 +195,12 @@ def log_posterior(params, sigma_squared, betas, ss_var, ss_mean, data, priors):
 
     return log_posterior
 
-fixed = gaussianplume.fixed_objects_of_coupling_matrix()
-iterations = 3_500
+
+
+# MALA_Within_Gibbs Results : -----------------------------------------------
+
+
+iterations = 2_500
 r_eps = 1e-5
 
 
@@ -234,35 +240,35 @@ plots.spike_slab_allocation(mala_chains)
 
 
 
+# Manifold MALA_Within_Gibbs Results : --------------------------------------
 
 
-
-
-
-iterations = 2
+iterations = 2_500
 r_eps = 1e-5
 
-t3 = time.time()
+
 manifold_mala_chains = mcmc.Manifold_MALA_Within_Gibbs(gaussianplume, data, log_posterior, priors, MHparams, Gibbsparams, fixed).manifold_mala_chains(Gibbsparams, mh_flat, iterations, r_eps)
-t4 = time.time()
 
-running_time_posi_MALA = t4-t3
-print("Running time MALA within Gibbs: " + str(round(running_time_posi_MALA // 60)) + " minutes " + str(round(running_time_posi_MALA % 60)) + " seconds")
 
-MALA_within_Gibbs_traces = {
-    "b_H": jnp.exp(mh_gibbs_out[0][:,0]),
-    "b_V": jnp.exp(mh_gibbs_out[0][:,1]),
-    "background" : mh_gibbs_out[9],
-    "s": jnp.exp(mh_gibbs_out[0][:,2:2+len(truth[2])]),
-    "sigma_squared": mh_gibbs_out[8],
-    "tan_gamma_H": jnp.exp(mh_gibbs_out[0][:,-2]),
-    "tan_gamma_V": jnp.exp(mh_gibbs_out[0][:,-1]),
-    "ll": mh_gibbs_out[1],
-    "dt": mh_gibbs_out[2],
-    "acceptance_rate": mh_gibbs_out[3]/np.arange(1,iterations+1),
-    "z_count": mh_gibbs_out[4],
-    "a": mh_gibbs_out[5],
-    "new_grad_squared_sum": mh_gibbs_out[6],
-    "max_dist": mh_gibbs_out[7],
-}
+plots = mcmc.Plots(gaussianplume, truth)
+plots.true_source_location_emission_rate_chains(manifold_mala_chains)
+plots.true_source_location_emission_rate_density(manifold_mala_chains, burn_in=0)
+plots.true_source_location_emission_rate_chains(manifold_mala_chains)
+plots.true_source_location_emission_rate_density(manifold_mala_chains, burn_in=0)
+plots.zero_emission_rates_chains(manifold_mala_chains)
+plots.measurement_error_var_chains(manifold_mala_chains)
+plots.measurement_error_var_density(manifold_mala_chains, burn_in=0)
+plots.background_chains(manifold_mala_chains)
+plots.background_density(manifold_mala_chains, burn_in=0)
+plots.tan_gamma_H_chains(manifold_mala_chains)
+plots.tan_gamma_H_density(manifold_mala_chains, burn_in=0)  
+plots.tan_gamma_V_chains(manifold_mala_chains)
+plots.tan_gamma_V_density(manifold_mala_chains, burn_in=0)
+plots.b_H_chains(manifold_mala_chains)
+plots.b_H_density(manifold_mala_chains, burn_in=0)
+plots.b_V_chains(manifold_mala_chains)
+plots.b_V_density(manifold_mala_chains, burn_in=0)
 
+plots.step_size_chains(manifold_mala_chains)
+plots.samples_acceptance_rate(manifold_mala_chains)
+plots.spike_slab_allocation(manifold_mala_chains)
