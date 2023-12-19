@@ -356,7 +356,7 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
             ax.set_yticklabels(self.grid.y)
             ax.set_xticklabels(self.grid.x)
         ax.invert_yaxis()
-        ax.scatter(float(self.source_location.source_location_x/self.grid.dx) - (self.grid.x_range[0]/self.grid.dx), float(self.source_location.source_location_y/self.grid.dy)-(self.grid.y_range[0]/self.grid.dy), marker='.', s=100, color='orange')
+        ax.scatter(float(self.source_location.source_location_x/self.grid.dx), float(self.source_location.source_location_y/self.grid.dy), marker='.', s=100, color='orange')
         colorbar = ax.collections[0].colorbar
         colorbar.set_label('Parts per million (PPM)')
         plt.title("Initial Gaussian Plume")
@@ -383,7 +383,7 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
             ax.set_yticklabels(self.grid.y)
             ax.set_xticklabels(self.grid.x)
         ax.invert_yaxis()
-        ax.scatter(float(self.source_location.source_location_x/self.grid.dx) - (self.grid.x_range[0]/self.grid.dx), float(self.source_location.source_location_y/self.grid.dy)-(self.grid.y_range[0]/self.grid.dy), marker='.', s=100, color='orange')
+        ax.scatter(float(self.source_location.source_location_x/self.grid.dx), float(self.source_location.source_location_y/self.grid.dy), marker='.', s=100, color='orange')
         colorbar = ax.collections[0].colorbar
         colorbar.set_label('Log parts per million (PPM)')
         plt.title("Log Initial Gaussian Plume")
@@ -396,7 +396,7 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
 
 
 
-    def fixed_objects_of_coupling_matrix(self):
+    def fixed_objects_of_grided_coupling_matrix(self):
         """ Returns the fixed objects for the coupling matrix.
             Avoids having to recompute them. These are not dependent on parameters being estimated. """
         sensor_x = jnp.array([i[0] for i in self.sensors_settings.sensor_locations])
@@ -405,7 +405,7 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
         windspeeds = jnp.tile(self.wind_speed(), self.sensors_settings.sensor_number).reshape(-1,1)
         winddirection = jnp.tile(self.wind_direction(), self.sensors_settings.sensor_number).reshape(-1,1)
         s = self.structure_to_vectorise(sensor_x, sensor_y)[0].T
-        s = s + self.grid.dx/2
+        s = s + self.grid.dx/2 # cell centered coupling matrix source locations
         xx = self.structure_to_vectorise(sensor_x, sensor_y)[1].reshape(-1,1)
         yy = self.structure_to_vectorise(sensor_x, sensor_y)[2].reshape(-1,1)
         delta_R = self.downwind_distance(s, xx, yy, winddirection)
@@ -418,7 +418,7 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
 
 
 
-    def temporal_coupling_matrix(self, fixed, tan_gamma_H = None, tan_gamma_V = None, b_H = None, b_V = None):
+    def temporal_grided_coupling_matrix(self, fixed, tan_gamma_H = None, tan_gamma_V = None, b_H = None, b_V = None):
         """Computes the coupling matrix for a time varying wind speed and direction."""
         if tan_gamma_H is None:
             tan_gamma_H = jnp.tan(self.atmospheric_state.horizontal_angle)
@@ -449,6 +449,9 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
         return A
 
 
+
+    def temporal_gridfree_coupling_matrix(self, fixed, tan_gamma_H = None, tan_gamma_V = None, b_H = None, b_V = None):
+        return None
 
     def wind_speed_plot(self, save = False, format = "pdf"):
         """ Plot the wind speed over time. """
@@ -611,7 +614,7 @@ class BackgroundGas(Grid, SourceLocation, AtmosphericState):
             axs[1].set_yticklabels(self.grid.y)
             axs[1].set_xticklabels(self.grid.x)
         axs[1].invert_yaxis()
-        axs[1].scatter(float(self.source_location.source_location_x/self.grid.dx) - (self.grid.x_range[0]/self.grid.dx), float(self.source_location.source_location_y/self.grid.dy)-(self.grid.y_range[0]/self.grid.dy), marker='.', s=100, color='orange')
+        axs[1].scatter(float(self.source_location.source_location_x/self.grid.dx), float(self.source_location.source_location_y/self.grid.dy), marker='.', s=100, color='orange')
         colorbar = axs[1].collections[0].colorbar
         colorbar.set_label('Parts per million (PPM)')
         
@@ -696,8 +699,8 @@ class Sensors(GaussianPlume, BackgroundGas):
 
     def temporal_sensors_measurements(self):
         """ Creates an observation vector."""
-        fixed = self.gaussianplume.fixed_objects_of_coupling_matrix()
-        A = self.gaussianplume.temporal_coupling_matrix(fixed)
+        fixed = self.gaussianplume.fixed_objects_of_grided_coupling_matrix()
+        A = self.gaussianplume.temporal_grided_coupling_matrix(fixed)
         source_rate = self.source_rate()
         measurement_errors = self.measurement_errors().reshape(-1,1)
         background_concentration = np.repeat(self.background_vector()[0], self.gaussianplume.wind_field.number_of_time_steps).reshape(-1,1)        
@@ -717,7 +720,7 @@ class Sensors(GaussianPlume, BackgroundGas):
     #         Returns:
     #             the OLS estimate of the source rates
     #     """
-    #     fixed = self.gaussianplume.fixed_objects_of_coupling_matrix()
+    #     fixed = self.gaussianplume.fixed_objects_of_grided_coupling_matrix()
     #     A = jgp.GaussianPlume(self.temporal, self.state, self.grid, self.sensors).coupling_matrix(fixed)
     #     y = self.temporal_sensors_measurements()[0]
     #     beta = np.full(self.sensors.sensor_number*self.temporal.number_of_time_steps, initial_background).reshape(-1,1)
@@ -770,9 +773,9 @@ class Sensors(GaussianPlume, BackgroundGas):
             ax.set_yticklabels(self.gaussianplume.grid.y)
             ax.set_xticklabels(self.gaussianplume.grid.x)
         ax.invert_yaxis()
-        ax.scatter(float(self.gaussianplume.source_location.source_location_x/self.gaussianplume.grid.dx) - (self.gaussianplume.grid.x_range[0]/self.gaussianplume.grid.dx), float(self.gaussianplume.source_location.source_location_y/self.gaussianplume.grid.dy)-(self.gaussianplume.grid.y_range[0]/self.gaussianplume.grid.dy), marker='.', s=100, color='orange')
+        ax.scatter(float(self.gaussianplume.source_location.source_location_x/self.gaussianplume.grid.dx), float(self.gaussianplume.source_location.source_location_y/self.gaussianplume.grid.dy), marker='.', s=100, color='orange')
         for i in range(len(sensors)):
-            ax.scatter(float(sensors[i][0]/self.gaussianplume.grid.dx) - (self.gaussianplume.grid.x_range[0]/self.gaussianplume.grid.dx) , float(sensors[i][1]/self.gaussianplume.grid.dy)-(self.gaussianplume.grid.y_range[0]/self.gaussianplume.grid.dy), marker='*', s=50, color='white')
+            ax.scatter(float(sensors[i][0]/self.gaussianplume.grid.dx), float(sensors[i][1]/self.gaussianplume.grid.dy), marker='*', s=50, color='white')
         colorbar = ax.collections[0].colorbar
         colorbar.set_label('Parts per million (PPM)')
         plt.title("Gaussian plume, background and sensors")
@@ -801,10 +804,10 @@ class Sensors(GaussianPlume, BackgroundGas):
             ax.set_yticklabels(self.gaussianplume.grid.y)
             ax.set_xticklabels(self.gaussianplume.grid.x)
         ax.invert_yaxis()
-        ax.scatter(float(self.gaussianplume.source_location.source_location_x/self.gaussianplume.grid.dx) - (self.gaussianplume.grid.x_range[0]/self.gaussianplume.grid.dx), float(self.gaussianplume.source_location.source_location_y/self.gaussianplume.grid.dy)-(self.gaussianplume.grid.y_range[0]/self.gaussianplume.grid.dy),
+        ax.scatter(float(self.gaussianplume.source_location.source_location_x/self.gaussianplume.grid.dx), float(self.gaussianplume.source_location.source_location_y/self.gaussianplume.grid.dy),
                     marker='.', s=100, color='orange')
         for i in range(len(sensors)):
-            ax.scatter(float(sensors[i][0]/self.gaussianplume.grid.dx) - (self.gaussianplume.grid.x_range[0]/self.gaussianplume.grid.dx) , float(sensors[i][1]/self.gaussianplume.grid.dy)-(self.gaussianplume.grid.y_range[0]/self.gaussianplume.grid.dy), marker='*', s=50, color='white')
+            ax.scatter(float(sensors[i][0]/self.gaussianplume.grid.dx), float(sensors[i][1]/self.gaussianplume.grid.dy), marker='*', s=50, color='white')
         colorbar = ax.collections[0].colorbar
         colorbar.set_label('Log parts per million (PPM)')
         plt.title("Log Gaussian plume, background and sensors")
@@ -816,38 +819,3 @@ class Sensors(GaussianPlume, BackgroundGas):
         return plt.show()
 
 
-    def true_concentration_and_sensors_plot(self, save: bool = False):
-        """ Produces a plot of the true concentration and the sensors locations.
-            This 2D (x,y) plot is made at the sensor elevation (z)."""
-        sensors = self.gaussianplume.sensors_settings.sensor_locations
-        gas_concentration = self.gaussianplume.initial_gaussian_plume()
-        background_concentration = self.background_vector()[1]
-        df = pd.DataFrame(jnp.squeeze(gas_concentration)+background_concentration).T
-        plt.figure(figsize=(15,10))
-        plt.title("   Gaussian plume, background and sensors locations")
-        if len(self.grid.x) > 10:
-            ax = sns.heatmap(df, cmap="viridis", xticklabels=round(len(self.grid.x)/10), yticklabels=round(len(self.grid.y)/10))
-            ax.set_xticks(np.arange(0, len(self.grid.x) + 1, round(len(self.grid.x)/10)))
-            ax.set_yticks(np.arange(0, len(self.grid.y) + 1, round(len(self.grid.y)/10)))
-            ax.set_yticklabels([round(i,1) for i in jnp.arange(self.grid.y_range[0], self.grid.y_range[1] + self.grid.dy + 1, self.grid.y_range[1]/10)], rotation=0, fontsize=25)
-            ax.set_xticklabels([round(i,1) for i in jnp.arange(self.grid.x_range[0], self.grid.x_range[1] + self.grid.dx + 1, self.grid.x_range[1]/10)], rotation=0, fontsize=25)
-        else:
-            ax = sns.heatmap(df, cmap="viridis")
-            ax.set_xticks(np.arange(0, len(self.grid.x) + 1, 1))
-            ax.set_yticks(np.arange(0, len(self.grid.y) + 1, 1))
-            ax.set_yticklabels([round(i,1) for i in jnp.arange(self.grid.y_range[0], self.grid.y_range[1] + self.grid.dy + 1, self.grid.dy)], rotation=0, fontsize=25)
-            ax.set_xticklabels([round(i,1) for i in jnp.arange(self.grid.x_range[0], self.grid.x_range[1] + self.grid.dx + 1, self.grid.dx)], rotation=0, fontsize=25)
-        ax.set_xlabel("X in meters", fontsize=30)
-        ax.set_ylabel("Y in meters", fontsize=30)
-        ax.invert_yaxis()
-        ax.scatter(float(self.state.source_location.x/self.grid.dx) - (self.grid.x_range[0]/self.grid.dx) + 0.5, float(self.state.source_location.y/self.grid.dy)-(self.grid.y_range[0]/self.grid.dy) + 0.5, marker='.', s=150, color='orange')
-        
-        for i in range(len(sensors)):
-            ax.scatter(float(sensors[i][0]/self.grid.dx) - (self.grid.x_range[0]/self.grid.dx) , float(sensors[i][1]/self.grid.dy)-(self.grid.y_range[0]/self.grid.dy), marker='*', s=50, color='white')
-        colorbar = ax.collections[0].colorbar
-        colorbar.set_label('Parts per million (PPM)')
-        colorbar.ax.tick_params(labelsize=20)
-        if save == True:
-            plt.savefig("true_concentration_and_sensors.pdf", dpi=300, bbox_inches="tight")
-
-        return plt.show()

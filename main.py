@@ -43,8 +43,8 @@ grid = gp.Grid(
 
 # Choose a source location
 source_location = gp.SourceLocation(
-    source_location_x = jnp.array(22),
-    source_location_y = jnp.array(22),
+    source_location_x = jnp.array(22.5),
+    source_location_y = jnp.array(22.5),
     source_location_z = jnp.array(1.0),
 )
 
@@ -52,7 +52,7 @@ source_location = gp.SourceLocation(
 wind_field = gp.WindField(
     initial_wind_speed = jnp.array(10.0),
     initial_wind_direction = jnp.array(-135.0),
-    number_of_time_steps = jnp.array(1_000),
+    number_of_time_steps = jnp.array(100),
     time_step = jnp.array(1.0),
     wind_speed_temporal_std = jnp.array(1.0),
     wind_direction_temporal_std = jnp.array(30.0),
@@ -118,7 +118,7 @@ sensors.log_atmospheric_methane_and_sensors(save, format='png')
 # Data
 truth = sensors.temporal_sensors_measurements()
 data = truth[0]
-fixed = gaussianplume.fixed_objects_of_coupling_matrix()
+fixed = gaussianplume.fixed_objects_of_grided_coupling_matrix()
 
 
 
@@ -199,7 +199,7 @@ def log_posterior(params, sigma_squared, betas, ss_var, ss_mean, data, priors, A
 # MALA_Within_Gibbs Results : -----------------------------------------------
 
 
-iterations = 10_000
+iterations = 1_000
 r_eps = 1e-5
 
 

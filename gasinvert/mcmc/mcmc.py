@@ -119,11 +119,11 @@ class MWG_tools:
     def mwg_scan(self, step, Gibbs_init, MH_init, iters, r_eps):
         key = random.PRNGKey(0)
         sigma_squared, background = Gibbs_init["sigma_squared"], Gibbs_init["background"].reshape(-1,1)
-        betas = jnp.repeat(background, 1_000).reshape(-1,1)
+        betas = jnp.repeat(background, 100).reshape(-1,1)
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(MH_init)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
         ss_mean = jnp.where(z==0, self.priors.log_spike_mean, self.priors.log_slab_mean).reshape(-1,1)
-        A = self.gaussianplume.temporal_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_V"]))
+        A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_V"]))
         ll, gradi = jax.value_and_grad(self.log_posterior)(self.mh_unflat_func(MH_init), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
         sum_accept = 0
         z_count = jnp.zeros(len(self.mh_unflat_func(MH_init)["log_s"]))
@@ -181,27 +181,28 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
     def mala_step(self, updates, key):
         [x, sigma_squared, background, ll, dt, sum_accept, z_count, new_grad_squared_sum, max_dist, iteration] = updates
         #          Updates          #
-        betas = jnp.repeat(background, 1_000).reshape(-1,1)
-        A = self.gaussianplume.temporal_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
+        betas = jnp.repeat(background, 100).reshape(-1,1)
+        A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(x)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
         ss_mean = jnp.where(z==0, self.priors.log_spike_mean, self.priors.log_slab_mean).reshape(-1,1)
         #           Gibbs           #
         sigma_squared = self.measurement_error_var_conditional_posterior(self.data, A, betas, jnp.exp(self.mh_unflat_func(x)["log_s"]), key)
         background = self.background_conditional_posterior(jnp.exp(self.mh_unflat_func(x)["log_s"]), A, sigma_squared, self.priors.variance_log_background_prior, key).reshape(-1,1)
-        betas = jnp.repeat(background, 1_000).reshape(-1,1)
+        betas = jnp.repeat(background, 100).reshape(-1,1)
         #           MALA            #
         ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
         prop = self.mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
-        lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
-        a = lp - ll + self.mala_dprop(x, prop, dt, sigma_squared, betas, ss_var, ss_mean, A) - self.mala_dprop(prop, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
+        A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
+        lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A_prop)
+        a = lp - ll + self.mala_dprop(x, prop, dt, sigma_squared, betas, ss_var, ss_mean, A_prop) - self.mala_dprop(prop, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
         accept = (jnp.log(jax.random.uniform(key)) < a)
-        new_x, new_ll = jnp.where(accept, prop, x), jnp.where(accept, lp, ll)
+        new_x, new_ll, new_A = jnp.where(accept, prop, x), jnp.where(accept, lp, ll), jnp.where(accept, A_prop, A)
         #          Updates          #
         sum_accept += jnp.min(jnp.array([1, jnp.exp(a)]))
         z_count += z
         max_dist = jnp.maximum(max_dist,  jnp.sqrt(jnp.square(new_x - self.mh_flat)))
-        gradients = ravel_pytree(self.glpi(new_x, sigma_squared, betas, ss_var, ss_mean, A))[0]
+        gradients = ravel_pytree(self.glpi(new_x, sigma_squared, betas, ss_var, ss_mean, new_A))[0]
         new_grad_squared_sum += gradients**2
         dt = max_dist / jnp.sqrt(new_grad_squared_sum + 1e-16)
 
@@ -240,6 +241,7 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
 
 
+
 class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
     def __init__(self, gaussianplume, data, log_posterior, priors, mh_params, gibbs_params, fixed):
@@ -263,8 +265,8 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
 
 
-    def inverse_hessian(self, x, sigma_squared, betas, ss_var, ss_mean):
-        hess = jax.jacfwd(jax.jacrev(self.log_posterior))(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors)
+    def inverse_hessian(self, x, sigma_squared, betas, ss_var, ss_mean, A):
+        hess = jax.jacfwd(jax.jacrev(self.log_posterior))(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
         b_H_hess = jnp.array([hess["log_b_H"]["log_b_H"]])
         b_V_hess = jnp.array([hess["log_b_V"]["log_b_V"]])
         log_s_hess = jnp.diag(hess["log_s"]["log_s"].reshape(len(self.mh_unflat_func(x)["log_s"]),len(self.mh_unflat_func(x)["log_s"])))
@@ -278,8 +280,8 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
 
 
-    def sqrt_inv_hess(self, x, sigma_squared, betas, ss_var, ss_mean):
-        inv_hessian = self.inverse_hessian(x, sigma_squared, betas, ss_var, ss_mean)
+    def sqrt_inv_hess(self, x, sigma_squared, betas, ss_var, ss_mean, A):
+        inv_hessian = self.inverse_hessian(x, sigma_squared, betas, ss_var, ss_mean, A)
         # Compute the eigenvalues and eigenvectors of the inverse Hessian
         eigenvalues, eigenvectors = jnp.linalg.eigh(inv_hessian)
         # Compute the square root of the absolute value of the eigenvalues
@@ -291,26 +293,26 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
 
 
-    def manifold_mala_advance(self, x, dt, sigma_squared, betas, ss_var, ss_mean):
-        return  x + 0.5*dt*jnp.matmul(self.inverse_hessian(x, sigma_squared, betas, ss_var, ss_mean), ravel_pytree(self.glpi(x, sigma_squared, betas, ss_var, ss_mean))[0])
+    def manifold_mala_advance(self, x, dt, sigma_squared, betas, ss_var, ss_mean, A):
+        return  x + 0.5*dt*jnp.matmul(self.inverse_hessian(x, sigma_squared, betas, ss_var, ss_mean, A), ravel_pytree(self.glpi(x, sigma_squared, betas, ss_var, ss_mean, A))[0])
 
 
 
-    def manifold_mala_rprop(self, key, x, dt, sigma_squared, betas, ss_var, ss_mean):
-        return self.manifold_mala_advance(x, dt, sigma_squared, betas, ss_var, ss_mean) + jnp.sqrt(dt)*self.sqrt_inv_hess(x, sigma_squared, betas, ss_var, ss_mean)@jax.random.normal(key, [len(x)])
+    def manifold_mala_rprop(self, key, x, dt, sigma_squared, betas, ss_var, ss_mean, A):
+        return self.manifold_mala_advance(x, dt, sigma_squared, betas, ss_var, ss_mean, A) + jnp.sqrt(dt)*self.sqrt_inv_hess(x, sigma_squared, betas, ss_var, ss_mean, A)@jax.random.normal(key, [len(x)])
 
 
 
-    def manifold_mala_dprop(self, prop, x, dt, sigma_squared, betas, ss_var, ss_mean):
-        return jnp.sum(tfd.Normal(loc=self.manifold_mala_advance(x, dt, sigma_squared, betas, ss_var, ss_mean), scale=jnp.diag(jnp.sqrt(dt)*self.sqrt_inv_hess(x, sigma_squared, betas, ss_var, ss_mean))).log_prob(prop))
+    def manifold_mala_dprop(self, prop, x, dt, sigma_squared, betas, ss_var, ss_mean, A):
+        return jnp.sum(tfd.Normal(loc=self.manifold_mala_advance(x, dt, sigma_squared, betas, ss_var, ss_mean, A), scale=jnp.diag(jnp.sqrt(dt)*self.sqrt_inv_hess(x, sigma_squared, betas, ss_var, ss_mean, A))).log_prob(prop))
 
 
 
     def manifold_mala_step(self, updates, key):
         [x, sigma_squared, background, ll, dt, sum_accept, z_count, new_grad_squared_sum, max_dist, iteration] = updates
         #          Updates          #        
-        betas = jnp.repeat(background, 1_000).reshape(-1,1)
-        A = self.gaussianplume.temporal_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
+        betas = jnp.repeat(background, 100).reshape(-1,1)
+        A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(x)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
         ss_mean = jnp.where(z==0, self.priors.log_spike_mean, self.priors.log_slab_mean).reshape(-1,1)
@@ -318,12 +320,13 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         #           Gibbs           #
         sigma_squared = self.measurement_error_var_conditional_posterior(self.data, A, betas, jnp.exp(self.mh_unflat_func(x)["log_s"]), key)
         background = self.background_conditional_posterior(jnp.exp(self.mh_unflat_func(x)["log_s"]), A, sigma_squared, self.priors.variance_log_background_prior, key).reshape(-1,1)
-        betas = jnp.repeat(background, 1_000).reshape(-1,1)
+        betas = jnp.repeat(background, 100).reshape(-1,1)
         #          Manifold MALA            #
-        ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors)
-        prop = self.manifold_mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean)
-        lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors)
-        a = lp - ll + self.manifold_mala_dprop(x, prop, dt, sigma_squared, betas, ss_var, ss_mean) - self.manifold_mala_dprop(prop, x, dt, sigma_squared, betas, ss_var, ss_mean)
+        ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
+        prop = self.manifold_mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
+        A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
+        lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A_prop)
+        a = lp - ll + self.manifold_mala_dprop(x, prop, dt, sigma_squared, betas, ss_var, ss_mean, A_prop) - self.manifold_mala_dprop(prop, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
         accept = (jnp.log(jax.random.uniform(key)) < a)
         new_x, new_ll = jnp.where(accept, prop, x), jnp.where(accept, lp, ll)
         #          Updates         #
@@ -367,6 +370,7 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
 
 
+
 class Plots:
 
     def __init__(self, gaussianplume, truth):
@@ -384,7 +388,7 @@ class Plots:
         return  plt.show()
     
     def true_source_location_emission_rate_density(self, chains, burn_in, save = False, format = "pdf"):
-        sns.kdeplot(chains["s"][burn_in:,jnp.where(self.truth[2]>0)].squeeze(), color='seagreen', label='MALA', fill=True, alpha=0.1)
+        sns.kdeplot(chains["s"][burn_in:,jnp.where(self.truth[2]>0)[0]].squeeze(), color='seagreen', label='MALA', fill=True, alpha=0.1)
         plt.axvline(self.gaussianplume.atmospheric_state.emission_rate, color='red', linestyle='--')
         plt.xlabel("Emission rate")
         plt.ylabel("Density")
