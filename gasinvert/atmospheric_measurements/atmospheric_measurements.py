@@ -194,16 +194,16 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
     
 
 
-    def structure_to_vectorise(self, coupling_x, coupling_y):
+    def structure_to_vectorise(self, sensor_x, sensor_y):
         """Produces the vectors needed to avoid for loop in temporal coupling matrix computation."""
         meshedgrid = jnp.meshgrid(jnp.arange(self.grid.x_range[0], self.grid.x_range[1] + self.grid.dx, self.grid.dx) \
                             , jnp.arange(self.grid.y_range[0], self.grid.y_range[1] + self.grid.dy, self.grid.dy))
         sx, sy = meshedgrid[0], meshedgrid[1]
-        coupling_s = jnp.array([sx.flatten(), sy.flatten(), np.full(sx.size, self.source_location.source_location_z)]).T
-        temporal_coupling_x = jnp.repeat(coupling_x, self.wind_field.number_of_time_steps)
-        temporal_coupling_y = jnp.repeat(coupling_y, self.wind_field.number_of_time_steps)
+        source_coord_grid = jnp.array([sx.flatten(), sy.flatten(), np.full(sx.size, self.source_location.source_location_z)]).T
+        temporal_sensor_x = jnp.repeat(sensor_x, self.wind_field.number_of_time_steps)
+        temporal_sensor_y = jnp.repeat(sensor_y, self.wind_field.number_of_time_steps)
         
-        return coupling_s, temporal_coupling_x, temporal_coupling_y
+        return source_coord_grid, temporal_sensor_x, temporal_sensor_y
 
 
 
@@ -272,7 +272,7 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
 
 
 
-    def vertical_offset(self, s):
+    def vertical_offset(self, z, s):
         """Compute the vertical offset.
 
         Args:
@@ -284,7 +284,6 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
             Float[Array, ""]: Vertical offset.
         """
         
-        z = jnp.full(self.wind_field.number_of_time_steps * self.sensors_settings.sensor_number, self.sensors_settings.measurement_elevation).reshape(-1,1)
         return z - s[2,:].reshape(-1,1).T
 
 
@@ -410,7 +409,8 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
         yy = self.structure_to_vectorise(sensor_x, sensor_y)[2].reshape(-1,1)
         delta_R = self.downwind_distance(s, xx, yy, winddirection)
         delta_H = self.horizontal_offset(s, xx, yy, winddirection)
-        delta_V = self.vertical_offset(s)
+        z = jnp.full(self.wind_field.number_of_time_steps * self.sensors_settings.sensor_number, self.sensors_settings.measurement_elevation).reshape(-1,1)
+        delta_V = self.vertical_offset(z, s)
         max_abl = self.atmospheric_state.max_abl
         height = self.source_location.source_location_z
 
@@ -450,8 +450,70 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
 
 
 
-    def temporal_gridfree_coupling_matrix(self, fixed, tan_gamma_H = None, tan_gamma_V = None, b_H = None, b_V = None):
-        return None
+    def fixed_objects_of_gridfree_coupling_matrix(self):
+        """ Returns the fixed objects for the coupling matrix.
+            Avoids having to recompute them. These are not dependent on parameters being estimated. """
+        sensor_x = jnp.array([i[0] for i in self.sensors_settings.sensor_locations])
+        sensor_y = jnp.array([i[1] for i in self.sensors_settings.sensor_locations])
+
+        windspeeds = jnp.tile(self.wind_speed(), self.sensors_settings.sensor_number).reshape(-1,1)
+        winddirection = jnp.tile(self.wind_direction(), self.sensors_settings.sensor_number).reshape(-1,1)
+        temporal_sensor_x = self.structure_to_vectorise(sensor_x, sensor_y)[1].reshape(-1,1)
+        temporal_sensor_y = self.structure_to_vectorise(sensor_x, sensor_y)[2].reshape(-1,1)
+        max_abl = self.atmospheric_state.max_abl
+        height = self.source_location.source_location_z
+        z = jnp.full(self.wind_field.number_of_time_steps * self.sensors_settings.sensor_number, self.sensors_settings.measurement_elevation).reshape(-1,1)
+
+        return windspeeds, winddirection, temporal_sensor_x, temporal_sensor_y, max_abl, height, z
+
+
+
+    def temporal_gridfree_coupling_matrix(self, fixed, x_coord = None, y_coord = None, tan_gamma_H = None, tan_gamma_V = None, b_H = None, b_V = None):
+        if x_coord is None:
+            x_coord = self.source_location.source_location_x
+        if y_coord is None:
+            y_coord = self.source_location.source_location_y
+        if tan_gamma_H is None:
+            tan_gamma_H = jnp.tan(self.atmospheric_state.horizontal_angle)
+        if tan_gamma_V is None:
+            tan_gamma_V = jnp.tan(self.atmospheric_state.vertical_angle)
+        if b_H is None:
+            b_H = self.atmospheric_state.downwind_power_H
+        if b_V is None:
+            b_V = self.atmospheric_state.downwind_power_V
+        
+        windspeeds, winddirection = fixed[0], fixed[1]
+        temporal_sensor_x, temporal_sensor_y = fixed[2], fixed[3]
+        max_abl, height = fixed[4], fixed[5]
+        z = fixed[6]
+        
+        s = jnp.array([x_coord, y_coord, jnp.full(len(x_coord), self.source_location.source_location_z)]).reshape(3,len(x_coord))
+
+        delta_R = self.downwind_distance(s, temporal_sensor_x, temporal_sensor_y, winddirection)
+        delta_H = self.horizontal_offset(s, temporal_sensor_x, temporal_sensor_y, winddirection)
+        delta_V = self.vertical_offset(z, s)
+
+        sigma_V = self.vertical_stddev(delta_R, tan_gamma_V, b_V)
+        sigma_H = self.horizontal_stddev(delta_R, tan_gamma_H, b_H)
+        twosigmavsqrd = 2.0 * (sigma_V ** 2)
+
+        coupling = ( 1.0/ (2.0 * jnp.pi * windspeeds * sigma_H * sigma_V ) ) * \
+            jnp.exp( -(delta_H **2 )/(2.0*(sigma_H **2)) ) * \
+            (   jnp.exp( -((delta_V )**2)/(twosigmavsqrd) ) + \
+                jnp.exp( -((delta_V  - 2.0*(max_abl - height))**2)/(twosigmavsqrd)) + \
+                jnp.exp( -((2 * height + delta_V  )**2)/(twosigmavsqrd)) + \
+                jnp.exp( -((2 * max_abl + delta_V )**2)/(twosigmavsqrd)) )
+        
+        coupling = jnp.where(delta_R <= 0.0, 0.0, coupling)
+        A = self.methane_kg_m3_to_ppm(coupling)
+
+        return A
+
+
+
+
+
+
 
     def wind_speed_plot(self, save = False, format = "pdf"):
         """ Plot the wind speed over time. """

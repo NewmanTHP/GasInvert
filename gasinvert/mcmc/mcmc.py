@@ -11,6 +11,7 @@ from jaxtyping import Float
 import time
 import matplotlib.pyplot as plt
 import seaborn as sns
+import pandas as pd
 
 
 
@@ -98,8 +99,10 @@ class Gibbs_samplers:
 
 class MWG_tools:
 
-    def __init__(self, gaussianplume, data, log_posterior, priors, mh_params, fixed):
+    def __init__(self, MMALA, grided, gaussianplume, data, log_posterior, priors, mh_params, fixed):
 
+        self.MMALA = MMALA
+        self.grided = grided
         self.gaussianplume = gaussianplume
         self.data = data
         self.log_posterior = log_posterior
@@ -119,18 +122,24 @@ class MWG_tools:
     def mwg_scan(self, step, Gibbs_init, MH_init, iters, r_eps):
         key = random.PRNGKey(0)
         sigma_squared, background = Gibbs_init["sigma_squared"], Gibbs_init["background"].reshape(-1,1)
-        betas = jnp.repeat(background, 100).reshape(-1,1)
+        betas = jnp.repeat(background, 10_000).reshape(-1,1)
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(MH_init)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
         ss_mean = jnp.where(z==0, self.priors.log_spike_mean, self.priors.log_slab_mean).reshape(-1,1)
-        A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_V"]))
+        if self.grided == True:
+            A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_V"]))
+        else:
+            A = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(MH_init)["source_x"]), jnp.exp(self.mh_unflat_func(MH_init)["source_y"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_V"]))
         ll, gradi = jax.value_and_grad(self.log_posterior)(self.mh_unflat_func(MH_init), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
         sum_accept = 0
         z_count = jnp.zeros(len(self.mh_unflat_func(MH_init)["log_s"]))
         gradients = ravel_pytree(gradi)[0]
         new_grad_squared_sum = gradients**2
         max_dist = jnp.full(len(MH_init), r_eps)
-        dt = max_dist / jnp.sqrt(new_grad_squared_sum)
+        if self.MMALA == True:
+            dt = r_eps
+        else:
+            dt = max_dist / jnp.sqrt(new_grad_squared_sum)
         iteration = 0
         _, states = jax.lax.scan(step, [MH_init, sigma_squared, background, ll, dt, sum_accept, z_count, new_grad_squared_sum, max_dist, iteration], jax.random.split(key, iters))
 
@@ -142,8 +151,9 @@ class MWG_tools:
 
 class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
-    def __init__(self, gaussianplume, data, log_posterior, priors, mh_params, gibbs_params, fixed):
+    def __init__(self, grided, gaussianplume, data, log_posterior, priors, mh_params, gibbs_params, fixed):
         
+        self.grided = grided
         self.gaussianplume = gaussianplume
         self.data = data
         self.log_posterior = log_posterior
@@ -158,8 +168,8 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         self.measurement_error_var_conditional_posterior = Gibbs_samplers(gaussianplume, data, priors).measurement_error_var_conditional_posterior
         self.binary_indicator_Zi_conditional_posterior = Gibbs_samplers(gaussianplume, data, priors).binary_indicator_Zi_conditional_posterior
 
-        self.glpi = MWG_tools(gaussianplume, data, log_posterior, priors, mh_params, fixed).glpi
-        self.mwg_scan = MWG_tools(gaussianplume, data, log_posterior, priors, mh_params, fixed).mwg_scan
+        self.glpi = MWG_tools(False, grided, gaussianplume, data, log_posterior, priors, mh_params, fixed).glpi
+        self.mwg_scan = MWG_tools(False, grided, gaussianplume, data, log_posterior, priors, mh_params, fixed).mwg_scan
 
 
 
@@ -181,19 +191,25 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
     def mala_step(self, updates, key):
         [x, sigma_squared, background, ll, dt, sum_accept, z_count, new_grad_squared_sum, max_dist, iteration] = updates
         #          Updates          #
-        betas = jnp.repeat(background, 100).reshape(-1,1)
-        A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
+        betas = jnp.repeat(background, 10_000).reshape(-1,1)
+        if self.grided == True:
+            A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
+        else:   
+            A = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["source_x"]), jnp.exp(self.mh_unflat_func(x)["source_y"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(x)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
         ss_mean = jnp.where(z==0, self.priors.log_spike_mean, self.priors.log_slab_mean).reshape(-1,1)
         #           Gibbs           #
         sigma_squared = self.measurement_error_var_conditional_posterior(self.data, A, betas, jnp.exp(self.mh_unflat_func(x)["log_s"]), key)
         background = self.background_conditional_posterior(jnp.exp(self.mh_unflat_func(x)["log_s"]), A, sigma_squared, self.priors.variance_log_background_prior, key).reshape(-1,1)
-        betas = jnp.repeat(background, 100).reshape(-1,1)
+        betas = jnp.repeat(background, 10_000).reshape(-1,1)
         #           MALA            #
         ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
         prop = self.mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
-        A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
+        if self.grided == True:
+            A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
+        else:   
+            A_prop = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["source_x"]), jnp.exp(self.mh_unflat_func(prop)["source_y"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
         lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A_prop)
         a = lp - ll + self.mala_dprop(x, prop, dt, sigma_squared, betas, ss_var, ss_mean, A_prop) - self.mala_dprop(prop, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
         accept = (jnp.log(jax.random.uniform(key)) < a)
@@ -219,22 +235,40 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         running_time = t2-t1
         print("Running time MALA within Gibbs: " + str(round(running_time // 60)) + " minutes " + str(round(running_time % 60)) + " seconds")
 
-        MALA_within_Gibbs_traces = {
-            "b_H": jnp.exp(mala_chains[0][:,0]),
-            "b_V": jnp.exp(mala_chains[0][:,1]),
-            "background" : mala_chains[2],
-            "s": jnp.exp(mala_chains[0][:,2:2+len(self.mh_unflat_func(MH_init)["log_s"])]),
-            "sigma_squared": mala_chains[1],
-            "tan_gamma_H": jnp.exp(mala_chains[0][:,-2]),
-            "tan_gamma_V": jnp.exp(mala_chains[0][:,-1]),
-            "ll": mala_chains[3],
-            "dt": mala_chains[4],
-            "acceptance_rate": mala_chains[5]/jnp.arange(1,iters+1),
-            "z_count": mala_chains[6],
-            "new_grad_squared_sum": mala_chains[7],
-            "max_dist": mala_chains[8],
-        }
-
+        if self.grided == True:
+            MALA_within_Gibbs_traces = {
+                "b_H": jnp.exp(mala_chains[0][:,0]),
+                "b_V": jnp.exp(mala_chains[0][:,1]),
+                "background" : mala_chains[2],
+                "s": jnp.exp(mala_chains[0][:,2:2+len(self.mh_unflat_func(MH_init)["log_s"])]),
+                "sigma_squared": mala_chains[1],
+                "tan_gamma_H": jnp.exp(mala_chains[0][:,-2]),
+                "tan_gamma_V": jnp.exp(mala_chains[0][:,-1]),
+                "ll": mala_chains[3],
+                "dt": mala_chains[4],
+                "acceptance_rate": mala_chains[5]/jnp.arange(1,iters+1),
+                "z_count": mala_chains[6],
+                "new_grad_squared_sum": mala_chains[7],
+                "max_dist": mala_chains[8],
+            }
+        else:
+            MALA_within_Gibbs_traces = {
+                "b_H": jnp.exp(mala_chains[0][:,0]),
+                "b_V": jnp.exp(mala_chains[0][:,1]),
+                "background" : mala_chains[2],
+                "s": jnp.exp(mala_chains[0][:,2:2+len(self.mh_unflat_func(MH_init)["log_s"])]),
+                "sigma_squared": mala_chains[1],
+                "tan_gamma_H": jnp.exp(mala_chains[0][:,2+len(self.mh_unflat_func(MH_init)["log_s"])]),
+                "tan_gamma_V": jnp.exp(mala_chains[0][:,2+len(self.mh_unflat_func(MH_init)["log_s"])+1]),
+                "source_x": jnp.exp(mala_chains[0][:,2+len(self.mh_unflat_func(MH_init)["log_s"])+2:2+len(self.mh_unflat_func(MH_init)["log_s"])+4]),
+                "source_y": jnp.exp(mala_chains[0][:,2+len(self.mh_unflat_func(MH_init)["log_s"])+4:2+len(self.mh_unflat_func(MH_init)["log_s"])+6]),
+                "ll": mala_chains[3],
+                "dt": mala_chains[4],
+                "acceptance_rate": mala_chains[5]/jnp.arange(1,iters+1),
+                "z_count": mala_chains[6],
+                "new_grad_squared_sum": mala_chains[7],
+                "max_dist": mala_chains[8],
+            }
         return MALA_within_Gibbs_traces
 
 
@@ -244,8 +278,9 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
 class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
 
-    def __init__(self, gaussianplume, data, log_posterior, priors, mh_params, gibbs_params, fixed):
+    def __init__(self, grided, gaussianplume, data, log_posterior, priors, mh_params, gibbs_params, fixed):
         
+        self.grided = grided
         self.gaussianplume = gaussianplume
         self.data = data
         self.log_posterior = log_posterior
@@ -260,8 +295,8 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         self.measurement_error_var_conditional_posterior = Gibbs_samplers(gaussianplume, data, priors).measurement_error_var_conditional_posterior
         self.binary_indicator_Zi_conditional_posterior = Gibbs_samplers(gaussianplume, data, priors).binary_indicator_Zi_conditional_posterior
 
-        self.glpi = MWG_tools(gaussianplume, data, log_posterior, priors, mh_params, fixed).glpi
-        self.mwg_scan = MWG_tools(gaussianplume, data, log_posterior, priors, mh_params, fixed).mwg_scan
+        self.glpi = MWG_tools(True, grided, gaussianplume, data, log_posterior, priors, mh_params, fixed).glpi
+        self.mwg_scan = MWG_tools(True, grided, gaussianplume, data, log_posterior, priors, mh_params, fixed).mwg_scan
 
 
 
@@ -272,8 +307,12 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         log_s_hess = jnp.diag(hess["log_s"]["log_s"].reshape(len(self.mh_unflat_func(x)["log_s"]),len(self.mh_unflat_func(x)["log_s"])))
         tan_gamma_H_hess = jnp.array([hess["log_tan_gamma_H"]["log_tan_gamma_H"]])
         tan_gamma_V_hess = jnp.array([hess["log_tan_gamma_V"]["log_tan_gamma_V"]])
-
-        hessian = jnp.diag(jnp.concatenate([b_H_hess, b_V_hess, log_s_hess, tan_gamma_H_hess, tan_gamma_V_hess]))
+        if self.grided == False:
+            source_x_hess = jnp.diag(hess["source_x"]["source_x"].reshape(len(self.mh_unflat_func(x)["source_x"]),len(self.mh_unflat_func(x)["source_x"])))
+            source_y_hess = jnp.diag(hess["source_y"]["source_y"].reshape(len(self.mh_unflat_func(x)["source_y"]),len(self.mh_unflat_func(x)["source_y"])))
+            hessian = jnp.diag(jnp.concatenate([b_H_hess, b_V_hess, log_s_hess, tan_gamma_H_hess, tan_gamma_V_hess, source_x_hess, source_y_hess]))
+        else:
+            hessian = jnp.diag(jnp.concatenate([b_H_hess, b_V_hess, log_s_hess, tan_gamma_H_hess, tan_gamma_V_hess]))
         inv_hessian = jnp.linalg.inv(hessian)
 
         return inv_hessian
@@ -311,8 +350,11 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
     def manifold_mala_step(self, updates, key):
         [x, sigma_squared, background, ll, dt, sum_accept, z_count, new_grad_squared_sum, max_dist, iteration] = updates
         #          Updates          #        
-        betas = jnp.repeat(background, 100).reshape(-1,1)
-        A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
+        betas = jnp.repeat(background, 10_000).reshape(-1,1)
+        if self.grided == True:
+            A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
+        else:   
+            A = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["source_x"]), jnp.exp(self.mh_unflat_func(x)["source_y"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(x)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
         ss_mean = jnp.where(z==0, self.priors.log_spike_mean, self.priors.log_slab_mean).reshape(-1,1)
@@ -320,11 +362,14 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         #           Gibbs           #
         sigma_squared = self.measurement_error_var_conditional_posterior(self.data, A, betas, jnp.exp(self.mh_unflat_func(x)["log_s"]), key)
         background = self.background_conditional_posterior(jnp.exp(self.mh_unflat_func(x)["log_s"]), A, sigma_squared, self.priors.variance_log_background_prior, key).reshape(-1,1)
-        betas = jnp.repeat(background, 100).reshape(-1,1)
+        betas = jnp.repeat(background, 10_000).reshape(-1,1)
         #          Manifold MALA            #
         ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
         prop = self.manifold_mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
-        A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
+        if self.grided == True:
+            A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
+        else:   
+            A_prop = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["source_x"]), jnp.exp(self.mh_unflat_func(prop)["source_y"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
         lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A_prop)
         a = lp - ll + self.manifold_mala_dprop(x, prop, dt, sigma_squared, betas, ss_var, ss_mean, A_prop) - self.manifold_mala_dprop(prop, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
         accept = (jnp.log(jax.random.uniform(key)) < a)
@@ -348,22 +393,40 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         running_time = t2-t1
         print("Running time Manifold MALA within Gibbs: " + str(round(running_time // 60)) + " minutes " + str(round(running_time % 60)) + " seconds")
 
-        Manifold_MALA_within_Gibbs_traces = {
-            "b_H": jnp.exp(manifold_mala_chains[0][:,0]),
-            "b_V": jnp.exp(manifold_mala_chains[0][:,1]),
-            "background" : manifold_mala_chains[2],
-            "s": jnp.exp(manifold_mala_chains[0][:,2:2+len(self.mh_unflat_func(MH_init)["log_s"])]),
-            "sigma_squared": manifold_mala_chains[1],
-            "tan_gamma_H": jnp.exp(manifold_mala_chains[0][:,-2]),
-            "tan_gamma_V": jnp.exp(manifold_mala_chains[0][:,-1]),
-            "ll": manifold_mala_chains[3],
-            "dt": manifold_mala_chains[4],
-            "acceptance_rate": manifold_mala_chains[5]/jnp.arange(1,iters+1),
-            "z_count": manifold_mala_chains[6],
-            "new_grad_squared_sum": manifold_mala_chains[7],
-            "max_dist": manifold_mala_chains[8],
-        }
-
+        if self.grided == True:
+            Manifold_MALA_within_Gibbs_traces = {
+                "b_H": jnp.exp(manifold_mala_chains[0][:,0]),
+                "b_V": jnp.exp(manifold_mala_chains[0][:,1]),
+                "background" : manifold_mala_chains[2],
+                "s": jnp.exp(manifold_mala_chains[0][:,2:2+len(self.mh_unflat_func(MH_init)["log_s"])]),
+                "sigma_squared": manifold_mala_chains[1],
+                "tan_gamma_H": jnp.exp(manifold_mala_chains[0][:,-2]),
+                "tan_gamma_V": jnp.exp(manifold_mala_chains[0][:,-1]),
+                "ll": manifold_mala_chains[3],
+                "dt": manifold_mala_chains[4],
+                "acceptance_rate": manifold_mala_chains[5]/jnp.arange(1,iters+1),
+                "z_count": manifold_mala_chains[6],
+                "new_grad_squared_sum": manifold_mala_chains[7],
+                "max_dist": manifold_mala_chains[8],
+            }
+        else:
+            Manifold_MALA_within_Gibbs_traces = {
+                "b_H": jnp.exp(manifold_mala_chains[0][:,0]),
+                "b_V": jnp.exp(manifold_mala_chains[0][:,1]),
+                "background" : manifold_mala_chains[2],
+                "s": jnp.exp(manifold_mala_chains[0][:,2:2+len(self.mh_unflat_func(MH_init)["log_s"])]),
+                "sigma_squared": manifold_mala_chains[1],
+                "tan_gamma_H": jnp.exp(manifold_mala_chains[0][:,2+len(self.mh_unflat_func(MH_init)["log_s"])]),
+                "tan_gamma_V": jnp.exp(manifold_mala_chains[0][:,2+len(self.mh_unflat_func(MH_init)["log_s"])+1]),
+                "source_x": jnp.exp(manifold_mala_chains[0][:,2+len(self.mh_unflat_func(MH_init)["log_s"])+2:2+len(self.mh_unflat_func(MH_init)["log_s"])+4]),
+                "source_y": jnp.exp(manifold_mala_chains[0][:,2+len(self.mh_unflat_func(MH_init)["log_s"])+4:2+len(self.mh_unflat_func(MH_init)["log_s"])+6]),
+                "ll": manifold_mala_chains[3],
+                "dt": manifold_mala_chains[4],
+                "acceptance_rate": manifold_mala_chains[5]/jnp.arange(1,iters+1),
+                "z_count": manifold_mala_chains[6],
+                "new_grad_squared_sum": manifold_mala_chains[7],
+                "max_dist": manifold_mala_chains[8],
+            }
         return Manifold_MALA_within_Gibbs_traces
 
 
@@ -400,6 +463,29 @@ class Plots:
 
 
 
+
+    def source_location_emission_rate_chains(self, chains, source_number, save = False, format = "pdf"):
+        plt.plot(chains["s"][:,source_number])
+        plt.title("Source emission rate")
+        plt.axhline(self.gaussianplume.atmospheric_state.emission_rate, color='red', linestyle='--')
+        if save:
+            plt.savefig("grid_free_source_emission_rate." + format, dpi=300, bbox_inches="tight")
+        return  plt.show()
+    
+    def source_location_emission_rate_density(self, chains, source_number, burn_in, save = False, format = "pdf"):
+        sns.kdeplot(chains["s"][burn_in:,source_number].squeeze(), color='seagreen', label='MALA', fill=True, alpha=0.1)
+        plt.axvline(self.gaussianplume.atmospheric_state.emission_rate, color='red', linestyle='--')
+        plt.xlabel("Emission rate")
+        plt.ylabel("Density")
+        plt.title("Source emission rate")
+        plt.legend()
+        if save:
+            plt.savefig("true source emission rate density." + format, dpi=300, bbox_inches="tight")
+        return  plt.show()
+
+
+
+
     def total_emission_rates_chains(self, chains, save = False, format = "pdf"):
         plt.plot(jnp.sum(chains["s"][:,:], axis=1))
         plt.title("Total Emissions Rates Over Grid")
@@ -409,7 +495,7 @@ class Plots:
         plt.show()
 
     def total_emission_rates_density(self, chains, burn_in, save = False, format = "pdf"):
-        sns.kdeplot(jnp.sum(chains["s"][burn_in:,:], axis=1), color='seagreen', label=str(chains), fill=True, alpha=0.1)
+        sns.kdeplot(jnp.sum(chains["s"][burn_in:,:], axis=1), color='seagreen', fill=True, alpha=0.1)
         plt.axvline(self.gaussianplume.atmospheric_state.emission_rate, color='red', linestyle='--')
         plt.xlabel("Total Emissions Rate")
         plt.ylabel("Density")
@@ -558,6 +644,55 @@ class Plots:
     
 
 
+    def source_position_chains(self, chains, save = False, format = "pdf"):
+        plt.plot(chains["source_x"][:], chains["source_y"][:])
+        plt.title("Source Position")
+        plt.scatter(self.gaussianplume.source_location.source_location_x, self.gaussianplume.source_location.source_location_y, color='red', marker='x')
+        if save:
+            plt.savefig("source position." + format, dpi=300, bbox_inches="tight")
+        plt.show()
+        
+    def source_position_density(self, chains, burn_in, save = False, format = "pdf"):
+        sns.kdeplot(x=chains["source_x"][burn_in:, 0], y=chains["source_y"][burn_in:, 0], cmap='viridis', fill=True, alpha=0.8)
+        sns.kdeplot(x=chains["source_x"][burn_in:, 1], y=chains["source_y"][burn_in:, 1], cmap='rainbow', fill=True, alpha=0.8)
+        plt.scatter(self.gaussianplume.source_location.source_location_x, self.gaussianplume.source_location.source_location_y, color='red', marker='x')
+        plt.xlabel("Source x")
+        plt.ylabel("Source y")
+        plt.title("Source Position Density")
+        if save:
+            plt.savefig("source position density." + format, dpi=300, bbox_inches="tight")
+        
+        return plt.show()
+
+
+
+    def emission_rates_heatmap(self, chains, burn_in, save = False, format = "pdf"):
+        df = pd.DataFrame(jnp.mean(chains["s"][burn_in:,:], axis=0).reshape(len(self.gaussianplume.grid.x), len(self.gaussianplume.grid.y)))
+        plt.figure(figsize=(15, 10))
+        if (len(self.gaussianplume.grid.x) > 10) and (len(self.gaussianplume.grid.y) > 10):
+            ax = sns.heatmap(df, cmap="viridis", xticklabels=round(len(self.gaussianplume.grid.x)/10), yticklabels=round(len(self.gaussianplume.grid.y)/10))
+            ax.set_xticks(jnp.arange(0, len(self.gaussianplume.grid.x) + 1, round(len(self.gaussianplume.grid.x)/10)))
+            ax.set_yticks(jnp.arange(0, len(self.gaussianplume.grid.y) + 1, round(len(self.gaussianplume.grid.y)/10)))
+            ax.set_yticklabels([round(i,1) for i in jnp.arange(self.gaussianplume.grid.y_range[0], self.gaussianplume.grid.y_range[1] + self.gaussianplume.grid.dy + 1, self.gaussianplume.grid.y_range[1]/10)], rotation=0)
+            ax.set_xticklabels([round(i,1) for i in jnp.arange(self.gaussianplume.grid.x_range[0], self.gaussianplume.grid.x_range[1] + self.gaussianplume.grid.dx + 1, self.gaussianplume.grid.x_range[1]/10)], rotation=0)
+        else:
+            ax = sns.heatmap(df, cmap="viridis")
+            ax.set_yticklabels(self.gaussianplume.grid.y)
+            ax.set_xticklabels(self.gaussianplume.grid.x)
+        ax.invert_yaxis()
+        ax.scatter(float(self.gaussianplume.source_location.source_location_x/self.gaussianplume.grid.dx), float(self.gaussianplume.source_location.source_location_y/self.gaussianplume.grid.dy), marker='.', s=10_000, color='orange')
+        colorbar = ax.collections[0].colorbar
+        colorbar.set_label('Parts per million (PPM)')
+        plt.title("Initial Gaussian Plume")
+        plt.xlabel("X (m)")
+        plt.ylabel("Y (m)")
+        if save == True:
+            plt.savefig("Initial Gaussian Plume." + format, dpi=300, bbox_inches="tight")
+
+        return plt.show()
+
+
+
     def layerwise_dog_step_size_chains(self, chains, save = False, format = "pdf"):
         plt.plot(chains["dt"][:])
         plt.title("Layerwise Dog Step Size")
@@ -588,6 +723,15 @@ class Plots:
         plt.title("Spike Slab Allocation")
         if save:
             plt.savefig("spike slab allocation." + format, dpi=300, bbox_inches="tight")
+        plt.show()
+
+
+
+    def log_posterior_plot(self, chains, save = False, format = "pdf"):
+        plt.plot(chains["ll"][:])
+        plt.title("Log Posterior")
+        if save:
+            plt.savefig("log posterior." + format, dpi=300, bbox_inches="tight")
         plt.show()
 
 
