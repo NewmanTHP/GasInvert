@@ -122,12 +122,17 @@ class MWG_tools:
     def mwg_scan(self, step, Gibbs_init, MH_init, iters, r_eps):
         key = random.PRNGKey(0)
         sigma_squared, background = Gibbs_init["sigma_squared"], Gibbs_init["background"].reshape(-1,1)
-        betas = jnp.repeat(background, 10_000).reshape(-1,1)
+        betas = jnp.repeat(background, 5_000).reshape(-1,1)
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(MH_init)["log_s"], key)
         ss_var = jnp.where(z==0, self.priors.log_spike_var, self.priors.log_slab_var).reshape(-1,1)
         ss_mean = jnp.where(z==0, self.priors.log_spike_mean, self.priors.log_slab_mean).reshape(-1,1)
         if self.grided == True:
+            # H and V estimation
             A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_V"]))
+            # H estimation
+            # A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_H"]), jnp.tan(self.gaussianplume.atmospheric_state.vertical_angle), jnp.exp(self.mh_unflat_func(MH_init)["log_b_H"]), self.gaussianplume.atmospheric_state.downwind_power_V)
+            # V estimation
+            # A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.tan(self.gaussianplume.atmospheric_state.horizontal_angle), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_V"]), self.gaussianplume.atmospheric_state.downwind_power_H, jnp.exp(self.mh_unflat_func(MH_init)["log_b_V"]))
         else:
             A = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(MH_init)["source_x"]), jnp.exp(self.mh_unflat_func(MH_init)["source_y"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_H"]), jnp.exp(self.mh_unflat_func(MH_init)["log_b_V"]))
         ll, gradi = jax.value_and_grad(self.log_posterior)(self.mh_unflat_func(MH_init), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
@@ -191,9 +196,14 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
     def mala_step(self, updates, key):
         [x, sigma_squared, background, ll, dt, sum_accept, z_count, new_grad_squared_sum, max_dist, iteration] = updates
         #          Updates          #
-        betas = jnp.repeat(background, 10_000).reshape(-1,1)
+        betas = jnp.repeat(background, 5_000).reshape(-1,1)
         if self.grided == True:
+            # H and V estimation
             A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
+            # H estimation
+            # A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.tan(self.gaussianplume.atmospheric_state.vertical_angle), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), self.gaussianplume.atmospheric_state.downwind_power_V)
+            # V estimation
+            # A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.tan(self.gaussianplume.atmospheric_state.horizontal_angle), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), self.gaussianplume.atmospheric_state.downwind_power_H, jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         else:   
             A = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["source_x"]), jnp.exp(self.mh_unflat_func(x)["source_y"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(x)["log_s"], key)
@@ -202,12 +212,17 @@ class MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         #           Gibbs           #
         sigma_squared = self.measurement_error_var_conditional_posterior(self.data, A, betas, jnp.exp(self.mh_unflat_func(x)["log_s"]), key)
         background = self.background_conditional_posterior(jnp.exp(self.mh_unflat_func(x)["log_s"]), A, sigma_squared, self.priors.variance_log_background_prior, key).reshape(-1,1)
-        betas = jnp.repeat(background, 10_000).reshape(-1,1)
+        betas = jnp.repeat(background, 5_000).reshape(-1,1)
         #           MALA            #
         ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
         prop = self.mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
         if self.grided == True:
+            # H and V estimation
             A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
+            # H estimation
+            # A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.tan(self.gaussianplume.atmospheric_state.vertical_angle), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), self.gaussianplume.atmospheric_state.downwind_power_V)
+            # V estimation
+            # A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.tan(self.gaussianplume.atmospheric_state.horizontal_angle), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), self.gaussianplume.atmospheric_state.downwind_power_H, jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
         else:   
             A_prop = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["source_x"]), jnp.exp(self.mh_unflat_func(prop)["source_y"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
         lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A_prop)
@@ -310,7 +325,7 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         if self.grided == False:
             source_x_hess = jnp.diag(hess["source_x"]["source_x"].reshape(len(self.mh_unflat_func(x)["source_x"]),len(self.mh_unflat_func(x)["source_x"])))
             source_y_hess = jnp.diag(hess["source_y"]["source_y"].reshape(len(self.mh_unflat_func(x)["source_y"]),len(self.mh_unflat_func(x)["source_y"])))
-            hessian = jnp.diag(jnp.concatenate([b_H_hess, b_V_hess, log_s_hess, tan_gamma_H_hess, tan_gamma_V_hess, source_x_hess, source_y_hess]))
+            hessian = jnp.diag(jnp.concatenate([b_H_hess,b_V_hess, log_s_hess, tan_gamma_H_hess, tan_gamma_V_hess, source_x_hess, source_y_hess]))
         else:
             hessian = jnp.diag(jnp.concatenate([b_H_hess, b_V_hess, log_s_hess, tan_gamma_H_hess, tan_gamma_V_hess]))
         inv_hessian = jnp.linalg.inv(hessian)
@@ -350,9 +365,14 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
     def manifold_mala_step(self, updates, key):
         [x, sigma_squared, background, ll, dt, sum_accept, z_count, new_grad_squared_sum, max_dist, iteration] = updates
         #          Updates          #        
-        betas = jnp.repeat(background, 10_000).reshape(-1,1)
+        betas = jnp.repeat(background, 5_000).reshape(-1,1)
         if self.grided == True:
+            # H and V estimation
             A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
+            # H estimation
+            # A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.tan(self.gaussianplume.atmospheric_state.vertical_angle), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), self.gaussianplume.atmospheric_state.downwind_power_V)
+            # V estimation
+            # A = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.tan(self.gaussianplume.atmospheric_state.horizontal_angle), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), self.gaussianplume.atmospheric_state.downwind_power_H, jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         else:   
             A = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(x)["source_x"]), jnp.exp(self.mh_unflat_func(x)["source_y"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(x)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(x)["log_b_H"]), jnp.exp(self.mh_unflat_func(x)["log_b_V"]))
         z = self.binary_indicator_Zi_conditional_posterior(self.mh_unflat_func(x)["log_s"], key)
@@ -362,12 +382,17 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         #           Gibbs           #
         sigma_squared = self.measurement_error_var_conditional_posterior(self.data, A, betas, jnp.exp(self.mh_unflat_func(x)["log_s"]), key)
         background = self.background_conditional_posterior(jnp.exp(self.mh_unflat_func(x)["log_s"]), A, sigma_squared, self.priors.variance_log_background_prior, key).reshape(-1,1)
-        betas = jnp.repeat(background, 10_000).reshape(-1,1)
+        betas = jnp.repeat(background, 5_000).reshape(-1,1)
         #          Manifold MALA            #
         ll = self.log_posterior(self.mh_unflat_func(x), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A)
         prop = self.manifold_mala_rprop(key, x, dt, sigma_squared, betas, ss_var, ss_mean, A)
         if self.grided == True:
+            # H and V estimation
             A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
+            # H estimation
+            # A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.tan(self.gaussianplume.atmospheric_state.vertical_angle), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), self.gaussianplume.atmospheric_state.downwind_power_V)
+            # V estimation
+            # A_prop = self.gaussianplume.temporal_grided_coupling_matrix(self.fixed, jnp.tan(self.gaussianplume.atmospheric_state.horizontal_angle), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), self.gaussianplume.atmospheric_state.downwind_power_H, jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
         else:   
             A_prop = self.gaussianplume.temporal_gridfree_coupling_matrix(self.fixed, jnp.exp(self.mh_unflat_func(prop)["source_x"]), jnp.exp(self.mh_unflat_func(prop)["source_y"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_H"]), jnp.exp(self.mh_unflat_func(prop)["log_tan_gamma_V"]), jnp.exp(self.mh_unflat_func(prop)["log_b_H"]), jnp.exp(self.mh_unflat_func(prop)["log_b_V"]))
         lp = self.log_posterior(self.mh_unflat_func(prop), sigma_squared, betas, ss_var, ss_mean, self.data, self.priors, A_prop)
@@ -412,7 +437,7 @@ class Manifold_MALA_Within_Gibbs(gp.GaussianPlume, Priors):
         else:
             Manifold_MALA_within_Gibbs_traces = {
                 "b_H": jnp.exp(manifold_mala_chains[0][:,0]),
-                "b_V": jnp.exp(manifold_mala_chains[0][:,1]),
+                "b_V": jnp.exp(manifold_mala_chains[0][:,0]),
                 "background" : manifold_mala_chains[2],
                 "s": jnp.exp(manifold_mala_chains[0][:,2:2+len(self.mh_unflat_func(MH_init)["log_s"])]),
                 "sigma_squared": manifold_mala_chains[1],
@@ -680,7 +705,7 @@ class Plots:
             ax.set_yticklabels(self.gaussianplume.grid.y)
             ax.set_xticklabels(self.gaussianplume.grid.x)
         ax.invert_yaxis()
-        ax.scatter(float(self.gaussianplume.source_location.source_location_x/self.gaussianplume.grid.dx), float(self.gaussianplume.source_location.source_location_y/self.gaussianplume.grid.dy), marker='.', s=10_000, color='orange')
+        ax.scatter(float(self.gaussianplume.source_location.source_location_x/self.gaussianplume.grid.dx), float(self.gaussianplume.source_location.source_location_y/self.gaussianplume.grid.dy), marker='.', s=5_000, color='orange')
         colorbar = ax.collections[0].colorbar
         colorbar.set_label('Parts per million (PPM)')
         plt.title("Initial Gaussian Plume")

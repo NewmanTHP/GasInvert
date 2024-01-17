@@ -89,6 +89,7 @@ class WindField:
 
     initial_wind_speed: Array
     initial_wind_direction: Array
+    threesixty_degrees: bool
     number_of_time_steps: Array
     time_step: Array
     wind_speed_temporal_std: Array
@@ -185,16 +186,20 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
         Returns a time varying wind direction. 
 
         """
-        key = jax.random.PRNGKey(self.wind_field.wind_direction_seed)
-        initial_value, mean = self.wind_field.initial_wind_direction, self.wind_field.initial_wind_direction
-        std = self.wind_field.wind_direction_temporal_std
-        _, wind_direction = jax.lax.scan(self.generate_ornstein_u_process, [initial_value, std, mean], jax.random.split(key, self.wind_field.number_of_time_steps))
-        
-        return wind_direction[0]
+        if self.wind_field.threesixty_degrees == True:
+            wind_direction = jnp.arange(0, 360*3, (360*3)/self.wind_field.number_of_time_steps)
+        else:
+            key = jax.random.PRNGKey(self.wind_field.wind_direction_seed)
+            initial_value, mean = self.wind_field.initial_wind_direction, self.wind_field.initial_wind_direction
+            std = self.wind_field.wind_direction_temporal_std
+            _, wind_d = jax.lax.scan(self.generate_ornstein_u_process, [initial_value, std, mean], jax.random.split(key, self.wind_field.number_of_time_steps))
+            wind_direction = wind_d[0]
+            
+        return wind_direction
     
 
 
-    def structure_to_vectorise(self, sensor_x, sensor_y):
+    def structure_to_vectorise(self, sensor_x, sensor_y, sensor_z):
         """Produces the vectors needed to avoid for loop in temporal coupling matrix computation."""
         meshedgrid = jnp.meshgrid(jnp.arange(self.grid.x_range[0], self.grid.x_range[1] + self.grid.dx, self.grid.dx) \
                             , jnp.arange(self.grid.y_range[0], self.grid.y_range[1] + self.grid.dy, self.grid.dy))
@@ -202,8 +207,9 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
         source_coord_grid = jnp.array([sx.flatten(), sy.flatten(), np.full(sx.size, self.source_location.source_location_z)]).T
         temporal_sensor_x = jnp.repeat(sensor_x, self.wind_field.number_of_time_steps)
         temporal_sensor_y = jnp.repeat(sensor_y, self.wind_field.number_of_time_steps)
+        temporal_sensor_z = jnp.repeat(sensor_z, self.wind_field.number_of_time_steps)
         
-        return source_coord_grid, temporal_sensor_x, temporal_sensor_y
+        return source_coord_grid, temporal_sensor_x, temporal_sensor_y, temporal_sensor_z
 
 
 
@@ -400,16 +406,17 @@ class GaussianPlume(Grid, SourceLocation, WindField, AtmosphericState, SensorsSe
             Avoids having to recompute them. These are not dependent on parameters being estimated. """
         sensor_x = jnp.array([i[0] for i in self.sensors_settings.sensor_locations])
         sensor_y = jnp.array([i[1] for i in self.sensors_settings.sensor_locations])
+        sensor_z = jnp.array([i[2] for i in self.sensors_settings.sensor_locations])
 
         windspeeds = jnp.tile(self.wind_speed(), self.sensors_settings.sensor_number).reshape(-1,1)
         winddirection = jnp.tile(self.wind_direction(), self.sensors_settings.sensor_number).reshape(-1,1)
-        s = self.structure_to_vectorise(sensor_x, sensor_y)[0].T
+        s = self.structure_to_vectorise(sensor_x, sensor_y, sensor_z)[0].T # sensor_z not given because we assume cells are at correct source height
         s = s + self.grid.dx/2 # cell centered coupling matrix source locations
-        xx = self.structure_to_vectorise(sensor_x, sensor_y)[1].reshape(-1,1)
-        yy = self.structure_to_vectorise(sensor_x, sensor_y)[2].reshape(-1,1)
+        xx = self.structure_to_vectorise(sensor_x, sensor_y, sensor_z)[1].reshape(-1,1)
+        yy = self.structure_to_vectorise(sensor_x, sensor_y, sensor_z)[2].reshape(-1,1)
         delta_R = self.downwind_distance(s, xx, yy, winddirection)
         delta_H = self.horizontal_offset(s, xx, yy, winddirection)
-        z = jnp.full(self.wind_field.number_of_time_steps * self.sensors_settings.sensor_number, self.sensors_settings.measurement_elevation).reshape(-1,1)
+        z = self.structure_to_vectorise(sensor_x, sensor_y, sensor_z)[3].reshape(-1,1)
         delta_V = self.vertical_offset(z, s)
         max_abl = self.atmospheric_state.max_abl
         height = self.source_location.source_location_z
